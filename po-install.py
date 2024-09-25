@@ -1,52 +1,66 @@
+#!/usr/bin/env python3
+import logging
 import subprocess
 from argparse import ArgumentParser, Namespace
 from os import geteuid, path
-from subprocess import CalledProcessError
+from shutil import copyfile, move
+from subprocess import DEVNULL, CalledProcessError
 from sys import argv
 
 
 def main(args: Namespace) -> int:
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+
     try:
-        subprocess.run(["msgfmt", "--version"], check=True)
+        subprocess.run(["msgfmt", "--version"], check=True, stdout=DEVNULL)
     except FileNotFoundError:
-        print("msgfmt not found. Please install gettext.")
+        logging.error("msgfmt not found. Please install gettext.")
         return 1
     
+    locale_dir = path.join("/usr/share/locale", args.locale, "LC_MESSAGES")
+    install_path = path.join(locale_dir, f"{args.app}.mo")
+    backup_path = f"{install_path}.bak"
+
     if not path.isfile(args.file):
-        print("File not found.")
+        logging.error("File not found.")
         return 1
-    elif not path.isdir(f"/usr/share/locale/{args.locale}/LC_MESSAGES"):
-        print("Locale not found.")
+    elif not path.isdir(locale_dir):
+        logging.error("Locale not found.")
         return 1
-    elif not path.isfile(f"/usr/share/locale/{args.locale}/LC_MESSAGES/{args.app}.mo"):
-        print("App not found.")
+    elif not path.isfile(install_path):
+        logging.error("App not found.")
         return 1
-    
-    install_path = f"/usr/share/locale/{args.locale}/LC_MESSAGES/{args.app}.mo"
-    
+
     if geteuid() != 0:
         # "Elevate!" - That one Dalek from Doctor Who
         try:
-            subprocess.run(["pkexec", "python", __file__, *argv[1:]], check=True)
+            subprocess.run(["pkexec", argv[0], *argv[1:]], check=True, stdout=DEVNULL, stderr=DEVNULL)
         except FileNotFoundError:
-            print("Unable to elevate privileges. Please manually run as root.")
+            try:
+                subprocess.run(["sudo", argv[0], *argv[1:]], check=True)
+            except FileNotFoundError:
+                logging.error("Unable to elevate privileges. Please manually run as root.")
+                return 1
+            except CalledProcessError:
+                return 1
         except CalledProcessError as e:
             match e.returncode:
-                case 126: # Dismissed
+                case 126:  # Dismissed
+                    logging.info("Authentication dismissed.")
                     return 0
-                case 127: # Authentication failed
-                    print("Authentication failed.")
+                case 127:  # Authentication failed
+                    logging.error("Authentication failed.")
                     return 1
         return 0
-    
-    if not path.isfile(f"/usr/share/locale/{args.locale}/LC_MESSAGES/{args.app}.mo.bak"):
-        subprocess.run(["cp", install_path, f"{install_path}.bak"], check=True)
-    
+
+    if not path.isfile(backup_path):
+        copyfile(install_path, backup_path)
+
     try:
         subprocess.run(["msgfmt", "-vc", args.file, "-o", install_path], check=True)
     except CalledProcessError:
-        print("Failed to install.")
-        subprocess.run(["mv", f"{install_path}.bak", install_path], check=True)
+        logging.error("Failed to install.")
+        move(backup_path, install_path)
         return 1
 
     return 0
