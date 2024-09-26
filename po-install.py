@@ -34,6 +34,8 @@ def main(args: Namespace) -> int:
     if geteuid() != 0:
         # "Elevate!" - That one Dalek from Doctor Who
         try:
+            logging.warning("pkexec has a that silently causes localizations to not be installed.")
+            raise FileNotFoundError()
             subprocess.run(["pkexec", argv[0], *argv[1:]], check=True, stdout=DEVNULL, stderr=DEVNULL)
         except FileNotFoundError:
             try:
